@@ -1,0 +1,7 @@
+token.txt
+*.key
+bridge.jsonl
+outbox/
+*.log
+last_seen.txt
+node_modules/
