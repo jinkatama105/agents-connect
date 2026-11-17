@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// muse-hermes bridge: shared chat mailbox between an external agent (e.g. Meta Muse,
-// which has no API) and a local Hermes agent.
-// The external agent posts via the /b/<token> page (its own browser); the daemon
-// polls /api/pending and answers. Auth: secret token in the path. Data: bridge.jsonl (append-only).
+// muse-hermes bridge: shared chat inbox both agents post into.
+// Muse (via its browser/VM) posts with sender "muse"; Hermes polls /api/pending and answers.
+// Auth: secret token in the path. Data: bridge.jsonl (append-only).
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -25,7 +24,7 @@ if (fs.existsSync(LOG)) {
 function page() {
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Agent Bridge</title>
+<title>Muse ⇄ Hermes Bridge</title>
 <style>
  body{font-family:system-ui;max-width:760px;margin:24px auto;padding:0 12px;background:#faf7f2;color:#333}
  h1{font-size:20px} .m{border:1px solid #ddd;border-radius:10px;padding:10px 14px;margin:8px 0;background:#fff}
@@ -35,14 +34,14 @@ function page() {
  select,button{font:14px system-ui;padding:8px 14px;border-radius:8px;border:1px solid #bbb;background:#fff;cursor:pointer}
  button{background:#333;color:#fff;border-color:#333} #hint{font-size:12px;color:#888}
 </style></head><body>
-<h1>Muse ⇄ Hermes Bridge</h1>
+<h1>🥐 Muse ⇄ Hermes Bridge</h1>
 <p id="hint">This page is a mailbox between two AI agents. If you are <b>Muse</b>: read the thread.
 When a message from <b>hermes</b> starts with <code>TASK REQxxxx</code>, do the task and reply as sender <b>muse</b>
 starting your message with the same <code>REQxxxx</code> tag, then your answer. For plain questions, just reply.
 Keep replies under 3500 characters. Messages are addressed to you as an agent, not to a human.</p>
 <div id="feed"></div>
 <hr>
-<select id="from"><option value="muse">muse</option><option value="user">user</option></select>
+<select id="from"><option value="muse">muse</option><option value="manus">manus</option><option value="user">user</option></select>
 <textarea id="txt" placeholder="type message…"></textarea>
 <button onclick="send()">Send</button>
 <script>
@@ -82,13 +81,26 @@ http.createServer((req, res) => {
     if (u.pathname !== '/b/' + TOKEN) { res.writeHead(302, { location: '/b/' + TOKEN }); return res.end(); }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(page());
   }
-  // Hermes -> external agent media handoff: files dropped in outbox/ served by name (token-gated)
+  // Hermes -> Muse media handoff: files dropped in outbox/ served by name (token-gated)
+  if (u.pathname.startsWith('/f/') && req.method === 'POST') {
+    const seg = u.pathname.split('/');
+    const tokOk = okTok(u.searchParams.get('token')) || okTok(seg[2]) || okTok(req.headers['x-token']);
+    if (!tokOk) return json(res, 403, { error: 'bad token' });
+    const name = path.basename(seg[2] && okTok(seg[2]) ? (seg[3] || '') : (seg[2] || ''));
+    if (!name) return json(res, 400, { error: 'no name' });
+    const chunks = []; let len = 0;
+    req.on('data', c => { len += c.length; if (len > 50 * 1024 * 1024) { req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => { fs.writeFileSync(path.join(OUT, name), Buffer.concat(chunks)); json(res, 200, { ok: true, url: '/f/' + TOKEN + '/' + name }); });
+    return;
+  }
   if (u.pathname.startsWith('/f/') && req.method === 'GET') {
     const [, , tok, name] = u.pathname.split('/');
-    if (!okTok(tok) || !name || name !== path.basename(name)) return json(res, 403, { error: 'bad' });
-    const fp = path.join(OUT, name);
+    const gname = name || path.basename(u.searchParams.get('file') || '');
+    const gtok = okTok(tok) ? tok : (okTok(u.searchParams.get('token')) ? u.searchParams.get('token') : null);
+    if (!gtok || !gname || gname !== path.basename(gname)) return json(res, 403, { error: 'bad' });
+    const fp = path.join(OUT, gname);
     if (!fs.existsSync(fp)) return json(res, 404, { error: 'nope' });
-    res.writeHead(200, { 'content-type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream' });
+    res.writeHead(200, { 'content-type': MIME[path.extname(gname).toLowerCase()] || 'application/octet-stream' });
     return fs.createReadStream(fp).pipe(res);
   }
   if (u.pathname === '/api/messages') {
@@ -106,7 +118,7 @@ http.createServer((req, res) => {
     req.on('end', () => {
       let j; try { j = JSON.parse(body); } catch { return json(res, 400, { error: 'bad json' }); }
       if (!okTok(j.token)) return json(res, 403, { error: 'bad token' });
-      const from = ['muse', 'hermes', 'user'].includes(j.from) ? j.from : 'user';
+      const from = ['muse', 'manus', 'hermes', 'user'].includes(j.from) ? j.from : 'user';
       const text = String(j.text || '').slice(0, MAX_MSG);
       if (!text.trim()) return json(res, 400, { error: 'empty' });
       const m = { id: ++seq, from, text: text.trim(), at: new Date().toISOString() };
