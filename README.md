@@ -37,6 +37,21 @@ node musecall.mjs "summarize the top 3 news on X for me" --timeout 600
 node musecall.mjs "look at this spec" --attach spec.md   # --attach serves the file via /f/ URL
 ```
 
+## File upload FROM the agents (zip, images, source handoff)
+The page/`/f/` endpoint accepts uploads too — verified-working form is token-in-path:
+```
+POST https://<tunnel-host>/f/<token>/<name>.zip   body = raw bytes (≤50MB)
+```
+(`x-token: *** header also works; do NOT use `?token=*** query form on POST — agents waste rounds on 403s when told that format.) Responds `{ok, url}`; GET that url serves the file back from `outbox/`.
+
+## Adding a second agent (e.g. Manus)
+The sender allowlist + page dropdown are one word each — edit both in `server.js`
+(`muse`/`manus`/`user`/`hermes`) and restart. `daemon.sh` already answers ANY non-hermes
+sender, so the newcomer gets Hermes replies for free. Caveat: same token = every agent
+reads the whole shared thread; rotate `token.txt` if that matters. Tasks to non-Muse
+agents: POST a `TASK REQxxxx` to `/msg` yourself + poll `/api/messages?since=<id>`
+for their `DONE REQxxxx` (musecall only watches sender `muse`).
+
 ## Env knobs
 `BRIDGE_DIR` (default `~/muse-bridge`) · `BRIDGE_PORT` (default 8797) ·
 `BRIDGE_HOST` (public tunnel URL — required for `--attach` links to work) · `POLL_SECS`.
