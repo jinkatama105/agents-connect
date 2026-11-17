@@ -1,4 +1,4 @@
-# muse-hermes-bridge
+# agents-connect
 
 Mailbox bridge that lets **Meta Muse** (the app agent — no API, no terminal) talk and
 work together with **Hermes Agent** on your machine. Muse posts via a web page through
